@@ -1,19 +1,139 @@
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Navigation from '../Navigation';
-import { products } from '@/data/products';
+import { supabase } from '@/lib/supabase';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { useCart } from '@/contexts/CartContext';
 import { useToast } from '../ui/use-toast';
-import { ShoppingCart, ArrowLeft, Check } from 'lucide-react';
+import { ShoppingCart, ArrowLeft, Check, AlertCircle, Package } from 'lucide-react';
+import { Alert, AlertDescription } from '../ui/alert';
+import ProductReviews from '../ProductReviews';
+
+interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  image: string;
+  material: string;
+  color: string;
+  category: string;
+  stock_quantity: number;
+  low_stock_threshold: number;
+  sku: string;
+  average_rating: number;
+  review_count: number;
+}
 
 export default function ProductDetailPage() {
   const { id } = useParams();
   const { addItem } = useCart();
   const { toast } = useToast();
-  
-  const product = products.find(p => p.id === id);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
+
+  useEffect(() => {
+    fetchProduct();
+  }, [id]);
+
+  const fetchProduct = async () => {
+    try {
+      setLoading(true);
+      
+      const { data, error } = await supabase
+        .schema('visitation')
+        .from('products')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        console.error('Supabase error:', error);
+        toast({
+          title: 'Database Error',
+          description: error.message,
+          variant: 'destructive'
+        });
+        return;
+      }
+      
+      setProduct(data);
+
+      if (data) {
+        const { data: related } = await supabase
+          .schema('visitation')
+          .from('products')
+          .select('*')
+          .eq('material', data.material)
+          .neq('id', data.id)
+          .limit(4);
+        
+        if (related) setRelatedProducts(related);
+      }
+    } catch (error: any) {
+      console.error('Error fetching product:', error);
+      toast({
+        title: 'Connection Error',
+        description: 'Could not connect to database.',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddToCart = () => {
+    if (!product) return;
+
+    if (product.stock_quantity === 0) {
+      toast({
+        title: 'Out of Stock',
+        description: 'This item is currently unavailable',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    addItem({
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      image: product.image,
+      material: product.material,
+      color: product.color
+    });
+    
+    toast({
+      title: 'Added to cart',
+      description: `${product.name} has been added to your cart.`,
+    });
+  };
+
+  const getStockStatus = () => {
+    if (!product) return null;
+    
+    if (product.stock_quantity === 0) {
+      return { label: 'Out of Stock', color: 'text-red-600', bgColor: 'bg-red-100' };
+    } else if (product.stock_quantity <= product.low_stock_threshold) {
+      return { label: `Only ${product.stock_quantity} left`, color: 'text-orange-600', bgColor: 'bg-orange-100' };
+    } else {
+      return { label: 'In Stock', color: 'text-green-600', bgColor: 'bg-green-100' };
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-background to-secondary/20">
+        <Navigation />
+        <div className="container mx-auto px-4 py-16 text-center">
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!product) {
     return (
@@ -29,20 +149,7 @@ export default function ProductDetailPage() {
     );
   }
 
-  const handleAddToCart = () => {
-    addItem({
-      id: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-      material: product.material,
-      color: product.color
-    });
-    toast({
-      title: 'Added to cart',
-      description: `${product.name} has been added to your cart.`,
-    });
-  };
+  const stockStatus = getStockStatus();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-secondary/20">
@@ -79,10 +186,14 @@ export default function ProductDetailPage() {
               <Badge variant="outline" className="capitalize">
                 {product.category}
               </Badge>
-              {product.inStock && (
-                <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
-                  <Check className="w-3 h-3 mr-1" />
-                  In Stock
+              {stockStatus && (
+                <Badge className={`${stockStatus.bgColor} ${stockStatus.color} hover:${stockStatus.bgColor}`}>
+                  {product.stock_quantity > 0 ? (
+                    <Check className="w-3 h-3 mr-1" />
+                  ) : (
+                    <AlertCircle className="w-3 h-3 mr-1" />
+                  )}
+                  {stockStatus.label}
                 </Badge>
               )}
             </div>
@@ -99,9 +210,31 @@ export default function ProductDetailPage() {
               {product.description}
             </p>
 
+            {product.stock_quantity <= product.low_stock_threshold && product.stock_quantity > 0 && (
+              <Alert className="mb-6 border-orange-200 bg-orange-50">
+                <Package className="h-4 w-4 text-orange-600" />
+                <AlertDescription className="text-orange-900">
+                  Low stock! Only {product.stock_quantity} items remaining. Order soon!
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {product.stock_quantity === 0 && (
+              <Alert className="mb-6 border-red-200 bg-red-50">
+                <AlertCircle className="h-4 w-4 text-red-600" />
+                <AlertDescription className="text-red-900">
+                  This item is currently out of stock. Please check back later.
+                </AlertDescription>
+              </Alert>
+            )}
+
             <Card className="p-6 mb-6 bg-secondary/30">
               <h3 className="font-semibold mb-3">Product Details</h3>
               <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">SKU:</span>
+                  <span className="font-medium">{product.sku}</span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Material:</span>
                   <span className="font-medium capitalize">{product.material}</span>
@@ -115,8 +248,10 @@ export default function ProductDetailPage() {
                   <span className="font-medium capitalize">{product.category}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Availability:</span>
-                  <span className="font-medium text-green-600">In Stock</span>
+                  <span className="text-muted-foreground">Stock:</span>
+                  <span className={`font-medium ${stockStatus?.color}`}>
+                    {product.stock_quantity} available
+                  </span>
                 </div>
               </div>
             </Card>
@@ -126,9 +261,10 @@ export default function ProductDetailPage() {
                 size="lg" 
                 className="flex-1 gap-2"
                 onClick={handleAddToCart}
+                disabled={product.stock_quantity === 0}
               >
                 <ShoppingCart className="w-5 h-5" />
-                Add to Cart
+                {product.stock_quantity === 0 ? 'Out of Stock' : 'Add to Cart'}
               </Button>
               <Link to="/cart" className="flex-1">
                 <Button size="lg" variant="outline" className="w-full">
@@ -147,15 +283,13 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Related Products */}
-        <div className="mt-16">
-          <h2 className="text-2xl font-serif font-bold text-primary mb-6">
-            You May Also Like
-          </h2>
-          <div className="grid md:grid-cols-4 gap-6">
-            {products
-              .filter(p => p.id !== product.id && p.material === product.material)
-              .slice(0, 4)
-              .map(relatedProduct => (
+        {relatedProducts.length > 0 && (
+          <div className="mt-16">
+            <h2 className="text-2xl font-serif font-bold text-primary mb-6">
+              You May Also Like
+            </h2>
+            <div className="grid md:grid-cols-4 gap-6">
+              {relatedProducts.map(relatedProduct => (
                 <Link key={relatedProduct.id} to={`/product/${relatedProduct.id}`}>
                   <Card className="overflow-hidden hover:shadow-lg transition-shadow bg-white group">
                     <div className="aspect-square overflow-hidden bg-secondary/20">
@@ -174,8 +308,16 @@ export default function ProductDetailPage() {
                   </Card>
                 </Link>
               ))}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Reviews Section */}
+        <ProductReviews 
+          productId={product.id} 
+          averageRating={product.average_rating || 0}
+          reviewCount={product.review_count || 0}
+        />
       </main>
     </div>
   );

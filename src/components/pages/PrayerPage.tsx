@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Navigation from '../Navigation';
+import Footer from '../Footer';
 import { getDailyMystery, prayers, Mystery } from '@/data/prayers';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -243,6 +244,8 @@ export default function PrayerPage() {
           </div>
         </div>
       </main>
+
+      <Footer />
     </div>
   );
 }
